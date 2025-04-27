@@ -28,6 +28,7 @@
 #include "sensor_msgs/msg/temperature.hpp"
 #include "sensor_msgs/msg/fluid_pressure.hpp"
 #include "geometry_msgs/msg/vector3.hpp"
+#include "rosgraph_msgs/msg/clock.hpp"
 
 namespace mavros
 {
@@ -58,6 +59,8 @@ static constexpr double RAD_TO_DEG = 180.0 / M_PI;
 class IMUPlugin : public plugin::Plugin
 {
 public:
+  int sec;
+  int nsec;
   EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
   explicit IMUPlugin(plugin::UASPtr uas_)
@@ -107,6 +110,7 @@ public:
     setup_covariance(unk_orientation_cov, 0.0);
 
     auto sensor_qos = rclcpp::SensorDataQoS();
+    sensor_qos.get_rmw_qos_profile().reliability = RMW_QOS_POLICY_RELIABILITY_RELIABLE;
 
     imu_pub = node->create_publisher<sensor_msgs::msg::Imu>("~/data", sensor_qos);
     imu_raw_pub = node->create_publisher<sensor_msgs::msg::Imu>("~/data_raw", sensor_qos);
@@ -123,6 +127,10 @@ public:
     diff_press_pub = node->create_publisher<sensor_msgs::msg::FluidPressure>(
       "~/diff_pressure",
       sensor_qos);
+    
+    clock_sub = node->create_subscription<rosgraph_msgs::msg::Clock>(
+      "/clock",
+      sensor_qos, std::bind(&IMUPlugin::clock_cb,this,std::placeholders::_1));
 
     // Reset has_* flags on connection change
     enable_connection_cb();
@@ -139,6 +147,10 @@ public:
       make_handler(&IMUPlugin::handle_scaled_pressure),
     };
   }
+void clock_cb(const rosgraph_msgs::msg::Clock::SharedPtr req) {
+  this->sec = req->clock.sec;
+  this->nsec = req->clock.nanosec;
+}
 
 private:
   std::string frame_id;
@@ -150,6 +162,8 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Temperature>::SharedPtr temp_baro_pub;
   rclcpp::Publisher<sensor_msgs::msg::FluidPressure>::SharedPtr static_press_pub;
   rclcpp::Publisher<sensor_msgs::msg::FluidPressure>::SharedPtr diff_press_pub;
+
+  rclcpp::Subscription<rosgraph_msgs::msg::Clock>::SharedPtr clock_sub;
 
   std::atomic<bool> has_hr_imu;
   std::atomic<bool> has_raw_imu;
@@ -270,7 +284,8 @@ private:
 
     // Fill message header
     imu_msg.header = header;
-
+    imu_msg.header.stamp.sec = sec;
+    imu_msg.header.stamp.nanosec = nsec;
     tf2::toMsg(gyro_flu, imu_msg.angular_velocity);
     tf2::toMsg(accel_flu, imu_msg.linear_acceleration);
 
